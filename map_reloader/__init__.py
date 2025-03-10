@@ -13,8 +13,8 @@ station: str = ""
 counter: int = 1
 spawn_location = None
 spawn_rotation = None
-vault_station_fallback = ""
-map_overrides = ["Raid_P", "GuardianTakedown_P"]
+travel_station_fallback: str = ""
+takedown_maps: list[str] = ["Raid_P", "GuardianTakedown_P"]
 
 @hook("/Script/GbxCameraModes.CameraBehavior:Update", Type.PRE)
 def reset_map_load(obj: UObject, args: WrappedStruct, _3: Any, func: BoundFunction) -> None:
@@ -30,29 +30,30 @@ def reset_map_load(obj: UObject, args: WrappedStruct, _3: Any, func: BoundFuncti
 
 @hook("/Script/OakGame.TravelStationObject:OnTravelStationActivated", Type.POST)
 def hit_save_station(obj: UObject, args: WrappedStruct, _3: Any, func: BoundFunction) -> None:
-    global vault_station_fallback
-    print(vault_station_fallback, obj, args, sep="\n")
+    global travel_station_fallback
     if ("VaultArch" in str(obj)) or ("ResurrectTravel" in str(obj) and "Trial" in str(obj)):
         # stores the previous NON vault travel station object when entering or exiting a vault
         # OR stores the previous NON mid-run new-u station when doing proving grounds (map fast travel)
         if "VaultArch" in str(args.OtherStation) or ("ResurrectTravel" in str(args.OtherStation) and "Trial" in str(args.OtherStation)):
             return
-        vault_station_fallback = args.OtherStation.OakTravelStationResurrectComponent
+        travel_station_fallback = str(args.OtherStation.OakTravelStationResurrectComponent)
 
+@hook("/Script/OakGame.GFxPauseMenu:OnQuitClicked", Type.PRE)
 def start_sq(obj: UObject, args: WrappedStruct, _3: Any, func: BoundFunction) -> None:
     # makes sure the game saves before reloading the map as doing both a save and reload in the same function causes the save to not work
     get_location_and_save()
 
 def reload_map():
-    global map_name, map_overrides
+    global map_name
     # reloads the map you are currently in
     find_class("GameplayStatics").ClassDefaultObject.OpenLevel(get_pc(), map_name, True, "")
     reset_map_load.enable()
 
+@hook("/Script/OakGame.GFxPauseMenu:OnQuitChoiceMade", Type.PRE)
 def qtd_pressed(obj: UObject, args: WrappedStruct, _3: Any, func: BoundFunction) -> type[Block] | None:
-    global map_name, map_overrides
+    global map_name, takedown_maps
     if args.ChoiceNameId == "GbxMenu_Secondary1": # quit to main menu button
-        if map_name in map_overrides:
+        if map_name in takedown_maps:
             return
         else:
             reload_map()
@@ -66,13 +67,13 @@ def qtd_pressed(obj: UObject, args: WrappedStruct, _3: Any, func: BoundFunction)
         return
 
 def get_location_and_save():
-    global spawn_location, spawn_rotation, station, map_name, vault_station_fallback
+    global spawn_location, spawn_rotation, station, map_name, travel_station_fallback_station_fallback
     map_name = str(ENGINE.GameViewport.World.CurrentLevel.OwningWorld.Name)
     if "MenuMap_P" not in map_name: # makes sure to not work while in main menu (keybind only)
         for item in find_all("TravelStationResurrectComponent", False): # finds all new-us
             if item.StationIsActive is True:
                 if ("VaultArch" in str(item)) or ("ResurrectTravel" in str(item) and "Trial" in str(item)):
-                    item = vault_station_fallback
+                    item = find_object("object", travel_station_fallback)
                 item.Outer.OnTravelStationActivated(None) # saves game
                 station = str(item.Outer.Name)
                 station_location = item.AttachParent.RelativeLocation # location of the new-u mesh
@@ -98,14 +99,6 @@ def get_location_and_save():
                     Roll=0,
                 )
 
-def button_override(setting, new_value):
-    if new_value is True:
-        add_hook("/Script/OakGame.GFxPauseMenu:OnQuitClicked", Type.PRE, "start_sq", start_sq)
-        add_hook("/Script/OakGame.GFxPauseMenu:OnQuitChoiceMade", Type.PRE, "qtd_pressed", qtd_pressed)
-    else:
-        remove_hook("/Script/OakGame.GFxPauseMenu:OnQuitClicked", Type.PRE, "start_sq")
-        remove_hook("/Script/OakGame.GFxPauseMenu:OnQuitChoiceMade", Type.PRE, "qtd_pressed")
-
 
 @keybind("hidden", is_hidden=True, event_filter=1)
 def save_quit_secret():
@@ -121,15 +114,21 @@ def save_quit():
     get_location_and_save()
     return
 
-button_override_option = BoolOption(
+@BoolOption(
     "Override Pause Menu Buttons",
     False,
     "Yes",
     "No",
-    on_change=button_override,
     description="Changes the functionality of the buttons in the pause menu.\n\"Quit to Main Menu\" -> Reloads Map\n\"Quit to Desktop\" -> \"Quit to Main Menu\""
 )
+def button_override(setting, new_value):
+    if new_value is True:
+        start_sq.enable()
+        qtd_pressed.enable()
+    else:
+        start_sq.disable()
+        qtd_pressed.disable()
 
 
-build_mod(options=[button_override_option], hooks=[hit_save_station])
+build_mod(hooks=[hit_save_station])
 
